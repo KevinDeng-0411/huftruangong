@@ -1,0 +1,26 @@
+# Docker profile —— 容器内覆盖 localhost 为容器名
+
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: 6379
+      password: ${REDIS_PASSWORD:}
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:mysql}:3306/ai_cust?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:}
+  ai:
+    ollama:
+      base-url: http://${OLLAMA_HOST:localhost}:11434
+      chat:
+        options:
+          model: ${OLLAMA_MODEL:qwen2.5:3b}
+  jpa:
+    hibernate:
+      ddl-auto: update
+
+rag:
+  base-url: ${RAG_BASE_URL:http://localhost:8081}
+  username: ${RAG_USERNAME:admin}
+  password: ${RAG_PASSWORD:}

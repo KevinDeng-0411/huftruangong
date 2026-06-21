@@ -1,0 +1,25 @@
+# ============================================================
+# RAG 检索服务连接（外部依赖）
+# ============================================================
+rag:
+  base-url: ${RAG_BASE_URL:http://localhost:8081}
+  username: ${RAG_USERNAME:admin}
+  password: ${RAG_PASSWORD:}
+
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: 6379
+      password: ${REDIS_PASSWORD:}
+
+  ai:
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      chat:
+        options:
+          model: ${OLLAMA_MODEL:qwen2.5:3b}
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:3306/ai_cust?useSSL=false&serverTimezone=UTC
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:}

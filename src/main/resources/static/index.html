@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Customer Agent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .typing-cursor::after {
+            content: '▋';
+            animation: blink 1s step-start infinite;
+        }
+        @keyframes blink { 50% { opacity: 0; } }
+        /* Markdown 样式微调 */
+        .prose pre { background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; }
+        .prose code { color: #ef4444; background: #f3f4f6; padding: 0.2rem 0.4rem; border-radius: 0.25rem; }
+        .prose pre code { color: inherit; background: transparent; padding: 0; }
+    </style>
+</head>
+<body class="bg-gray-50 h-screen flex flex-col">
+
+<div id="app" class="h-full flex flex-col">
+
+    <div v-if="!isLoggedIn" class="flex-1 flex items-center justify-center p-4">
+        <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-md border border-gray-100">
+            <h1 class="text-2xl font-bold text-gray-800 mb-6 text-center">AI 智能客服登录</h1>
+
+            <form @submit.prevent="handleLogin" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">用户名</label>
+                    <input v-model="loginForm.username" type="text" required
+                           class="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">密码</label>
+                    <input v-model="loginForm.password" type="password" required
+                           class="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">验证码</label>
+                    <div class="flex gap-2">
+                        <input v-model="loginForm.code" type="text" required placeholder="请输入右侧验证码"
+                               class="flex-1 px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition">
+                        <div class="relative w-32 h-10 bg-gray-200 rounded cursor-pointer overflow-hidden border" @click="refreshCaptcha">
+                            <img v-if="captchaBlobUrl" :src="captchaBlobUrl" class="w-full h-full object-cover" alt="captcha" />
+                            <div v-else class="absolute inset-0 flex items-center justify-center text-xs text-gray-500">加载中...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="errorMsg" class="text-red-500 text-sm text-center bg-red-50 p-2 rounded">{{ errorMsg }}</div>
+
+                <button type="submit" :disabled="isLoading"
+                        class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg transition disabled:opacity-50">
+                    {{ isLoading ? '登录中...' : '立即登录' }}
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <div v-else class="flex-1 flex overflow-hidden">
+
+        <div class="w-64 bg-gray-900 text-white flex flex-col hidden md:flex">
+            <div class="p-4 border-b border-gray-700 font-bold text-lg flex items-center gap-2">
+                🤖 AI Agent Pro
+            </div>
+
+            <div class="flex-1 overflow-y-auto p-2 space-y-2">
+                <div class="text-xs text-gray-500 px-2 py-1 uppercase font-semibold">模式选择</div>
+                <button @click="switchMode('chat')"
+                        :class="['w-full text-left px-3 py-2 rounded transition flex items-center gap-2', currentMode === 'chat' ? 'bg-blue-600' : 'hover:bg-gray-800']">
+                    💬 普通对话
+                </button>
+                <button @click="switchMode('agent')"
+                        :class="['w-full text-left px-3 py-2 rounded transition flex items-center gap-2', currentMode === 'agent' ? 'bg-purple-600' : 'hover:bg-gray-800']">
+                    🧠 智能 Agent
+                </button>
+            </div>
+
+            <div class="p-4 border-t border-gray-700">
+                <div class="flex items-center gap-2 mb-3">
+                    <div class="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-sm">U</div>
+                    <div class="text-sm truncate">用户 ID: {{ userId }}</div>
+                </div>
+                <button @click="logout" class="w-full text-sm text-gray-400 hover:text-white hover:underline">退出登录</button>
+            </div>
+        </div>
+
+        <div class="flex-1 flex flex-col bg-white relative">
+
+            <div class="h-14 border-b flex items-center px-6 justify-between bg-white z-10">
+                <div class="font-medium text-gray-700">
+                    {{ currentMode === 'chat' ? '普通问答 (Qwen)' : 'Agent 任务模式 (思考 + 工具调用)' }}
+                </div>
+                <div class="text-sm text-gray-500">
+                    <span v-if="isConnected" class="text-green-500">● 已连接</span>
+                    <span v-else class="text-red-500">● 未连接</span>
+                </div>
+            </div>
+
+            <div class="flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth" ref="chatContainer">
+
+                <div class="flex gap-4 max-w-4xl mx-auto">
+                    <div class="w-8 h-8 rounded-full bg-blue-100 flex-shrink-0 flex items-center justify-center text-blue-600 text-sm">AI</div>
+                    <div class="bg-gray-100 p-3 rounded-2xl rounded-tl-none text-gray-800 text-sm max-w-[80%]">
+                        你好！我是你的智能助手。{{ currentMode === 'agent' ? '在 Agent 模式下，我可以帮你查询余额、分析数据。' : '请问有什么可以帮你的？' }}
+                    </div>
+                </div>
+
+                <div v-for="(msg, index) in messages" :key="index" class="max-w-4xl mx-auto w-full">
+
+                    <div v-if="msg.role === 'user'" class="flex gap-4 flex-row-reverse">
+                        <div class="w-8 h-8 rounded-full bg-gray-200 flex-shrink-0 flex items-center justify-center text-gray-600 text-sm">Me</div>
+                        <div class="bg-blue-600 text-white p-3 rounded-2xl rounded-tr-none text-sm max-w-[80%] shadow-sm whitespace-pre-wrap">{{ msg.content }}</div>
+                    </div>
+
+                    <div v-else class="flex gap-4">
+                        <div class="w-8 h-8 rounded-full bg-blue-100 flex-shrink-0 flex items-center justify-center text-blue-600 text-sm">AI</div>
+                        <div class="flex-1 space-y-2 max-w-[90%]">
+
+                            <div v-if="msg.steps && msg.steps.length > 0" class="space-y-2 mb-2">
+                                <div v-for="(step, sIdx) in msg.steps" :key="sIdx"
+                                     class="text-xs rounded border border-gray-200 overflow-hidden bg-gray-50 animate-fade-in">
+
+                                    <div v-if="step.type === 'THINKING'" class="px-3 py-2 flex items-center gap-2 text-gray-500">
+                                        <span class="animate-pulse">🧠</span> 正在思考第 {{ step.step }} 步...
+                                    </div>
+
+                                    <div v-if="step.type === 'EXECUTING'" class="px-3 py-2 bg-purple-50 border-l-4 border-purple-500 text-purple-700">
+                                        <div class="flex items-center gap-2 font-semibold">
+                                            <span>🛠️ 调用工具:</span>
+                                            <span class="font-mono bg-white px-1 rounded border border-purple-200">{{ step.tool }}</span>
+                                        </div>
+                                    </div>
+
+                                    <div v-if="step.type === 'ERROR'" class="px-3 py-2 bg-red-50 text-red-600 border-l-4 border-red-500">
+                                        ⚠️ {{ step.content }}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div v-if="msg.content"
+                                 class="bg-white border border-gray-100 p-4 rounded-2xl rounded-tl-none text-sm text-gray-800 shadow-sm prose max-w-none"
+                                 v-html="renderMarkdown(msg.content)">
+                            </div>
+
+                            <div v-if="msg.isTyping && !msg.content" class="text-gray-400 text-xs ml-1 flex items-center gap-1">
+                                <span class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></span>
+                                <span class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.1s"></span>
+                                <span class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="p-4 border-t bg-white">
+                <div class="max-w-4xl mx-auto relative">
+                    <textarea v-model="input" @keydown.enter.prevent="sendMessage"
+                              placeholder="输入消息，Enter 发送..."
+                              rows="1"
+                              @input="autoResize"
+                              :disabled="isGenerating"
+                              class="w-full pl-4 pr-12 py-3 bg-gray-100 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none resize-none shadow-inner transition disabled:opacity-50 text-sm"></textarea>
+
+                    <button @click="sendMessage" :disabled="!input.trim() || isGenerating"
+                            class="absolute right-2 bottom-2 p-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 transition">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="text-center text-xs text-gray-400 mt-2">
+                    Internal System Beta v0.1 | Powered by Spring AI & Qwen
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const { createApp, ref, onMounted, nextTick } = Vue;
+
+    createApp({
+        setup() {
+            // --- 状态定义 ---
+            const isLoggedIn = ref(false);
+            const token = ref(localStorage.getItem('token') || '');
+            const userId = ref(localStorage.getItem('userId') || '');
+
+            // 登录表单
+            const loginForm = ref({ username: '', password: '', code: '', uuid: '' });
+            const captchaBlobUrl = ref('');
+            const errorMsg = ref('');
+            const isLoading = ref(false);
+
+            // 聊天状态
+            const currentMode = ref('chat'); // 'chat' or 'agent'
+            const messages = ref([]);
+            const input = ref('');
+            const isGenerating = ref(false);
+            const isConnected = ref(true); // 简单模拟
+            const chatContainer = ref(null);
+
+            // --- 核心逻辑：登录 ---
+            const refreshCaptcha = async () => {
+                try {
+                    const res = await fetch('/api/auth/captcha');
+                    const uuid = res.headers.get('X-Captcha-UUID');
+                    const blob = await res.blob();
+
+                    loginForm.value.uuid = uuid;
+                    if (captchaBlobUrl.value) URL.revokeObjectURL(captchaBlobUrl.value);
+                    captchaBlobUrl.value = URL.createObjectURL(blob);
+                } catch (e) {
+                    console.error("验证码获取失败", e);
+                }
+            };
+
+            const handleLogin = async () => {
+                isLoading.value = true;
+                errorMsg.value = '';
+                try {
+                    const res = await fetch('/api/auth/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(loginForm.value)
+                    });
+
+                    if (!res.ok) throw new Error((await res.json()).message || '登录失败');
+
+                    const data = await res.json();
+                    token.value = data.token;
+                    userId.value = data.userId;
+
+                    // 持久化
+                    localStorage.setItem('token', data.token);
+                    localStorage.setItem('userId', data.userId);
+
+                    isLoggedIn.value = true;
+                } catch (e) {
+                    errorMsg.value = e.message;
+                    refreshCaptcha(); // 失败刷新验证码
+                } finally {
+                    isLoading.value = false;
+                }
+            };
+
+            const logout = () => {
+                localStorage.removeItem('token');
+                localStorage.removeItem('userId');
+                isLoggedIn.value = false;
+                messages.value = [];
+                refreshCaptcha();
+            };
+
+            // --- 核心逻辑：聊天 ---
+            const switchMode = (mode) => {
+                currentMode.value = mode;
+                messages.value = []; // 切换模式清空当前屏（可选）
+            };
+
+            const autoResize = (e) => {
+                e.target.style.height = 'auto';
+                e.target.style.height = e.target.scrollHeight + 'px';
+            };
+
+            const scrollToBottom = () => {
+                nextTick(() => {
+                    if (chatContainer.value) {
+                        chatContainer.value.scrollTop = chatContainer.value.scrollHeight;
+                    }
+                });
+            };
+
+            const renderMarkdown = (text) => {
+                return marked.parse(text || '');
+            };
+
+            // 发送消息
+            const sendMessage = async () => {
+                if (!input.value.trim() || isGenerating.value) return;
+
+                const userText = input.value.trim();
+                input.value = '';
+                isGenerating.value = true;
+
+                // 1. 添加用户消息
+                messages.value.push({ role: 'user', content: userText });
+
+                // 2. 准备 AI 消息占位符
+                const aiMsg = {
+                    role: 'assistant',
+                    content: '',
+                    steps: [], // Agent 思考步骤
+                    isTyping: true
+                };
+                messages.value.push(aiMsg);
+                scrollToBottom();
+
+                // 3. 构造请求
+                const endpoint = currentMode.value === 'agent' ? '/api/agent' : '/api/chat';
+
+                try {
+                    // 使用 fetch 获取流
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token.value}`
+                        },
+                        body: JSON.stringify({ prompt: userText })
+                    });
+
+                    if (!response.ok) {
+                        if (response.status === 401) logout();
+                        throw new Error("请求失败: " + response.statusText);
+                    }
+
+                    // 处理 SSE 流
+                    // 注意：Spring WebFlux 默认返回 data: string\n\n 格式
+                    // 这里我们需要手动解析 EventStream 格式，或者使用 EventSource (但 EventSource 不支持 POST 原生)
+                    // 所以我们用 fetch + ReadableStreamReader 手动解析
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        // 保留最后一个可能不完整的片段
+                        buffer = lines.pop();
+
+                        for (const line of lines) {
+                            if (line.trim() === '') continue;
+
+                            if (currentMode.value === 'chat') {
+                                // 简单 Chat 模式: 格式通常是 "data: content"
+                                if (line.startsWith('data:')) {
+                                    const chunk = line.substring(5); // 去掉 'data:'
+                                    aiMsg.content += chunk;
+                                    scrollToBottom();
+                                }
+                            } else {
+                                // Agent 模式: 需要解析 event 类型
+                                // 格式可能是:
+                                // event:status
+                                // data: {...}
+                                //
+                                // event:message
+                                // data: ...
+                                //
+                                // 简单的解析器逻辑 (实际项目中可以用 @microsoft/fetch-event-source)
+                                processAgentLine(line, aiMsg);
+                            }
+                        }
+                    }
+
+                } catch (e) {
+                    aiMsg.content += `\n[系统错误]: ${e.message}`;
+                } finally {
+                    aiMsg.isTyping = false;
+                    isGenerating.value = false;
+                    scrollToBottom();
+                }
+            };
+
+            // 简单的 Agent SSE 解析状态机
+            let currentEvent = null;
+            const processAgentLine = (line, aiMsg) => {
+                if (line.startsWith('event:')) {
+                    currentEvent = line.substring(6).trim();
+                } else if (line.startsWith('data:')) {
+                    const dataStr = line.substring(5); // 保留空格可能很重要，视后端实现而定
+
+                    if (currentEvent === 'status') {
+                        // 解析 JSON 状态
+                        try {
+                            const statusObj = JSON.parse(dataStr);
+                            aiMsg.steps.push(statusObj);
+                            scrollToBottom();
+                        } catch(e) {}
+                    } else if (currentEvent === 'message') {
+                        // 累加正文
+                        aiMsg.content += dataStr;
+                        scrollToBottom();
+                    } else if (currentEvent === 'error') {
+                        aiMsg.steps.push({ type: 'ERROR', content: dataStr });
+                    }
+                    // 如果没有 event，默认为普通文本流 (兼容性)
+                    else if (!currentEvent) {
+                        aiMsg.content += dataStr;
+                    }
+                }
+            };
+
+            // --- 生命周期 ---
+            onMounted(() => {
+                if (token.value) {
+                    isLoggedIn.value = true;
+                } else {
+                    refreshCaptcha();
+                }
+            });
+
+            return {
+                isLoggedIn, loginForm, captchaBlobUrl, errorMsg, isLoading, userId,
+                currentMode, messages, input, isGenerating, isConnected, chatContainer,
+                refreshCaptcha, handleLogin, logout, switchMode, sendMessage, autoResize, renderMarkdown
+            };
+        }
+    }).mount('#app');
+</script>
+
+</body>
+</html>
